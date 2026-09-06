@@ -1,24 +1,57 @@
 name: Release
 
-# Build Windows + macOS installers and attach them to a GitHub Release.
+# Build Windows + macOS installers and attach them to a draft GitHub Release.
 # Trigger:  git tag v0.1.1 && git push origin v0.1.1
 on:
   push:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Expense Manager ${tag}`,
+              body: [
+                'Download the installer for your platform below.',
+                '',
+                '**Windows** — run the `.exe`; on the SmartScreen prompt click *More info -> Run anyway* (the app is unsigned).',
+                '**macOS** — open the `.dmg`, drag the app to Applications, then right-click the app -> *Open* the first time (Gatekeeper blocks unsigned apps on double-click).',
+              ].join('\n'),
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
   build:
-    permissions:
-      contents: write
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
             args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: windows-latest
             args: ""
+            rust-targets: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -32,7 +65,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust-targets }}
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
@@ -42,18 +75,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and release
+      - name: Build and upload
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Expense Manager ${{ github.ref_name }}"
-          releaseBody: |
-            Download the installer for your platform below.
-
-            **Windows** — run the `.exe`; on the SmartScreen prompt click *More info → Run anyway* (the app is unsigned).
-            **macOS** — open the `.dmg`, drag the app to Applications, then right-click the app → *Open* the first time (Gatekeeper blocks unsigned apps on double-click).
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
