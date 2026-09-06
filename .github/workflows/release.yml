@@ -1,0 +1,59 @@
+name: Release
+
+# Build Windows + macOS installers and attach them to a GitHub Release.
+# Trigger:  git tag v0.1.1 && git push origin v0.1.1
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Expense Manager ${{ github.ref_name }}"
+          releaseBody: |
+            Download the installer for your platform below.
+
+            **Windows** — run the `.exe`; on the SmartScreen prompt click *More info → Run anyway* (the app is unsigned).
+            **macOS** — open the `.dmg`, drag the app to Applications, then right-click the app → *Open* the first time (Gatekeeper blocks unsigned apps on double-click).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
